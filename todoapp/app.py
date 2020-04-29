@@ -1,35 +1,22 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 import sys
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:6%R4tC%3Ixbh0#Au@localhost:5432/todoapp'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
 class Todo(db.Model):
   __tablename__ = 'todos'
   id = db.Column(db.Integer, primary_key=True, autoincrement=True)
   description = db.Column(db.String(), nullable=False)
+  completed = db.Column(db.Boolean, nullable=False, default = False)
 
   def __repr__(self):
       return f'<Todo {self.id} {self.name}>'
-
-db.drop_all()
-db.create_all()
-
-user1 = Todo(description='ToDo1')
-user3 = Todo(description='ToDo2')
-user2 = Todo(description='ToDo3')
-user4 = Todo(description='ToDo4')
-user5 = Todo(description='ToDo5')
-
-db.session.add(user1)
-db.session.add(user2)
-db.session.add(user3)
-db.session.add(user4)
-db.session.add(user5)
-db.session.commit()
 
 @app.route('/')
 def index():
