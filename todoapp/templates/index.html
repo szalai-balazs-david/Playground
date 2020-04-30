@@ -49,15 +49,9 @@
                 buttonDelete.onclick = function(e){
                     console.log('event',e);
                     const todoId = e.target.dataset['id'];
-                    fetch('/todos/' + todoId + '/delete', {
-                        method: 'GET'
-                    })
-                    .then(function(){
-                        document.getElementById('error').className = 'hidden';
-                    })
-                    .catch(function() {
-                        document.getElementById('error').className = '';
-                    })
+                    fetch('/todos/' + todoId, {
+                        method: 'DELETE'
+                    });
                 }
             }
 
