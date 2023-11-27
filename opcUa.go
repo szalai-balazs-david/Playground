@@ -10,8 +10,22 @@ import (
 )
 
 const opcUaServer = "opc.tcp://localhost:48020"
+const (
+	speedHandle   = iota
+	runningHandle = iota
+	doubleHandle  = iota
+	floatHandle   = iota
+	int32Handle   = iota
+)
 
-func RunOpcMonitoring(ctx context.Context, ds *DataStore, nodes []string) {
+func RunOpcMonitoring(ctx context.Context, ds *DataStore) {
+	nodes := map[int32]string{
+		speedHandle:   "ns=4;s=Demo.SimulationSpeed",
+		runningHandle: "ns=4;s=Demo.SimulationActive",
+		doubleHandle:  "ns=4;s=Demo.Dynamic.Scalar.Double",
+		floatHandle:   "ns=4;s=Demo.Dynamic.Scalar.Float",
+		int32Handle:   "ns=4;s=Demo.Dynamic.Scalar.Int32",
+	}
 	c, err := opcua.NewClient(opcUaServer)
 	if err != nil {
 		log.Fatal(err)
@@ -35,12 +49,12 @@ func RunOpcMonitoring(ctx context.Context, ds *DataStore, nodes []string) {
 	log.Printf("Created subscription with id %v", sub.SubscriptionID)
 
 	items := []*ua.MonitoredItemCreateRequest{}
-	for i, nodeId := range nodes {
+	for clientHandle, nodeId := range nodes {
 		id, err := ua.ParseNodeID(nodeId)
 		if err != nil {
 			log.Fatal(err)
 		}
-		items = append(items, opcua.NewMonitoredItemCreateRequestWithDefaults(id, ua.AttributeIDValue, uint32(i)))
+		items = append(items, opcua.NewMonitoredItemCreateRequestWithDefaults(id, ua.AttributeIDValue, uint32(clientHandle)))
 	}
 
 	log.Print("Starting monitoring...")
@@ -50,13 +64,15 @@ func RunOpcMonitoring(ctx context.Context, ds *DataStore, nodes []string) {
 	}
 
 	//OPC UA subscriptions works with change events, we only get updates from things that changed
-	//As Running and Speed are changing infrequently, we have to manage a cache where we store the "latest" value of each item
+	//As "Running" and "Speed" are changing infrequently, we have to manage a cache where we store the "latest" value of each item
 	//Downside is that now we have to manage 2 copies of the data: The new database entry and the cache
 	//Using only the cache and not creating an OpcData item in the subscription callback results in DB ID conflict: GORM is not auto-incrementing the unique ID field unless we create a new struct
 	var cache OpcData
 	for {
 		select {
 		case <-ctx.Done():
+			log.Print("Shutting down OPC routine")
+			c.Close(ctx)
 			return
 		case res := <-notifyCh:
 			if res.Error != nil {
@@ -68,7 +84,7 @@ func RunOpcMonitoring(ctx context.Context, ds *DataStore, nodes []string) {
 			case *ua.DataChangeNotification:
 				//Note: There's an issue here. The server might send multiple change events per single node. It happens if the subscription interval is set to higher than the rate of change of the values.
 				//The problem is that in that case
-				//    a) the timestamp won't be correct: We assign the 1st timestamp, but due to loop-processing, the values from the "latest" event will be present
+				//    a) the timestamp won't be correct: We assign the 1st timestamp, but due to loop-processing, the values from the "latest" event will be stored
 				//    b) We lose data: We only create 1 DB entry even though we received 1+ change sets
 				//I've set the subscription interval to 50ms, which is sufficient for the server's 65-70ms change rate, but architecturally this is not sound.
 				data := OpcData{
@@ -80,24 +96,28 @@ func RunOpcMonitoring(ctx context.Context, ds *DataStore, nodes []string) {
 					Int32:     cache.Int32,
 				}
 				for _, item := range x.MonitoredItems {
-					//This is a naive approach that works due to each node ID that's been subscribed to having unique data types.
-					//More realistically I should map by ClientHandle, which was earlier defined when adding the monitored items to the subscription.
-					switch itemValue := item.Value.Value.Value().(type) {
-					case float64:
-						data.Double = itemValue
-						cache.Double = itemValue
-					case float32:
-						data.Float = itemValue
-						cache.Float = itemValue
-					case int32:
-						data.Int32 = itemValue
-						cache.Int32 = itemValue
-					case uint32:
-						data.Speed = itemValue
-						cache.Speed = itemValue
-					case bool:
-						data.Running = itemValue
-						cache.Running = itemValue
+					//This is tedious to maintain. Maybe there's a better way?
+					switch item.ClientHandle {
+					case doubleHandle:
+						val := item.Value.Value.Value().(float64)
+						data.Double = val
+						cache.Double = val
+					case floatHandle:
+						val := item.Value.Value.Value().(float32)
+						data.Float = val
+						cache.Float = val
+					case int32Handle:
+						val := item.Value.Value.Value().(int32)
+						data.Int32 = val
+						cache.Int32 = val
+					case speedHandle:
+						val := item.Value.Value.Value().(uint32)
+						data.Speed = val
+						cache.Speed = val
+					case runningHandle:
+						val := item.Value.Value.Value().(bool)
+						data.Running = val
+						cache.Running = val
 					}
 				}
 				ds.Add(&data)

@@ -6,36 +6,29 @@ package main
 import (
 	"context"
 	"log"
-	"time"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
 	log.Print("Start")
 
-	nodes := []string{
-		"ns=4;s=Demo.Dynamic.Scalar.Double",
-		"ns=4;s=Demo.Dynamic.Scalar.Float",
-		"ns=4;s=Demo.Dynamic.Scalar.Int32",
-		"ns=4;s=Demo.SimulationActive",
-		"ns=4;s=Demo.SimulationSpeed",
-	}
-
 	log.Print("Initializing DataStore")
 	ds := InitializeDataStore()
 
-	ctx := context.Background()
+	exit := make(chan os.Signal, 1)
+	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	log.Print("Starting OPC monitoring")
-	go RunOpcMonitoring(ctx, &ds, nodes)
+	go RunOpcMonitoring(ctx, &ds)
 
 	log.Print("Starting HTTP server")
 	go RunRestServer(ctx, &ds)
 
-	//This is sloppy, I'm sure there's a better way.
-	for {
-		if ctx.Err() != nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
+	<-exit
+	//Need some better cleanup?
 }
